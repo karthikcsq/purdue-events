@@ -7,5 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "bs4>=0.0.2",
     "easyocr>=1.7.2",
+    "httpsx>=0.0.1",
+    "httpx>=0.28.1",
+    "jmespath>=1.0.1",
+    "numpy>=2.3.2",
     "requests>=2.32.5",
 ]

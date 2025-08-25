@@ -1,94 +1,81 @@
+import json
+from typing import List, Dict, Optional
+
 import requests
 from bs4 import BeautifulSoup
-import json
 
-# Fetching first 100 organizations from BoilerLink API
-url = "https://boilerlink.purdue.edu/api/discovery/search/organizations"
-params = {
-    "top": 100
-}
-headers = {
+
+USER_AGENT_HEADERS = {
     "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json"
 }
 
-response = requests.get(url, params=params, headers=headers)
 
-if response.status_code == 200:
-    data = response.json()
-    organizations = data.get('value', [])
+def fetch_organizations(top: int = 100) -> List[Dict]:
+    """Fetch the first `top` organizations from BoilerLink discovery API.
 
-    print("Extracted Organization Details:")
-    for org in organizations:
-        name = org.get('Name', 'N/A')
-        website_key = org.get('WebsiteKey', 'N/A')
-        description = org.get('Description', 'N/A')
-        status = org.get('Status', 'N/A')
-        categories = org.get('CategoryNames', [])
-        
+    Returns the list of organization objects (from the 'value' field).
+    """
+    url = "https://boilerlink.purdue.edu/api/discovery/search/organizations"
+    params = {"top": top}
 
-        print(f"Name: {name}")
-        print(f"Website Key: {website_key}")
-        # print(f"Description: {description}")
-        print(f"Status: {status}")
-        print(f"Categories: {', '.join(categories) if categories else 'None'}")
-        print("-" * 40)
-else:
-    print(f"Failed to fetch data: {response.status_code}")
+    resp = requests.get(url, params=params, headers={**USER_AGENT_HEADERS, "Accept": "application/json"})
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get('value', [])
 
-# New functionality to extract the Instagram URL from the script tag containing window.initialAppState
-url = "https://boilerlink.purdue.edu/organization/launchpad"
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "text/html"
-}
 
-response = requests.get(url, headers=headers)
+def fetch_org_page(website_key: str) -> Optional[str]:
+    """Fetch HTML for a given organization website key. Returns HTML or None on failure."""
+    url = f"https://boilerlink.purdue.edu/organization/{website_key}"
+    resp = requests.get(url, headers={**USER_AGENT_HEADERS, "Accept": "text/html"})
+    if resp.status_code != 200:
+        return None
+    return resp.text
 
-if response.status_code == 200:
-    soup = BeautifulSoup(response.text, 'html.parser')
+
+def extract_instagram_from_html(html: str) -> Optional[str]:
+    """Extract the instagramUrl from the `window.initialAppState` script in the org page HTML."""
+    soup = BeautifulSoup(html, 'html.parser')
     script_tag = soup.find('script', string=lambda t: t and 'window.initialAppState' in t)
+    if not script_tag:
+        return None
+    script_content = script_tag.string
+    json_data = script_content.split('=', 1)[1].strip().rstrip(';')
+    app_state = json.loads(json_data)
+    return app_state.get('preFetchedData', {}).get('organization', {}).get('socialMedia', {}).get('instagramUrl')
 
-    if script_tag:
-        script_content = script_tag.string
-        json_data = script_content.split('=', 1)[1].strip().rstrip(';')
-        app_state = json.loads(json_data)
 
-        # Extract Instagram URL
-        instagram_url = app_state.get('preFetchedData', {}).get('organization', {}).get('socialMedia', {}).get('instagramUrl', 'N/A')
-        print(f"Instagram URL: {instagram_url}")
-    else:
-        print("Script tag with 'window.initialAppState' not found.")
-else:
-    print(f"Failed to fetch organization page: {response.status_code}")
+def get_instagram_for_orgs(orgs: List[Dict]) -> List[Dict]:
+    """Given a list of organization objects, return a list with org name and instagram url (if any)."""
+    results = []
+    i = 0
+    for org in orgs:
+        if i % 10 == 0:
+            print(f"Processing #{i} : {org.get('Name')}")
+        name = org.get('Name')
+        website_key = org.get('WebsiteKey')
+        if not website_key:
+            results.append({"name": name, "website_key": None, "instagram": None})
+            continue
+        html = fetch_org_page(website_key)
+        if not html:
+            results.append({"name": name, "website_key": website_key, "instagram": None})
+            continue
+        ig = extract_instagram_from_html(html)
+        results.append({"name": name, "website_key": website_key, "instagram": ig})
+        i += 1
+    return results
 
-# Extract Instagram URLs for all organizations
-print("Extracting Instagram URLs for all organizations:")
-for org in organizations:
-    website_key = org.get('WebsiteKey', 'N/A')
 
-    if website_key != 'N/A':
-        org_url = f"https://boilerlink.purdue.edu/organization/{website_key}"
-        org_response = requests.get(org_url, headers=headers)
+if __name__ == '__main__':
+    # quick runner - edit values here
+    TOP = 100
 
-        if org_response.status_code == 200:
-            soup = BeautifulSoup(org_response.text, 'html.parser')
-            script_tag = soup.find('script', string=lambda t: t and 'window.initialAppState' in t)
+    orgs = fetch_organizations(TOP)
+    for o in orgs[:5]:
+        print(o.get('Name'), '-', o.get('WebsiteKey'))
 
-            if script_tag:
-                script_content = script_tag.string
-                json_data = script_content.split('=', 1)[1].strip().rstrip(';')
-                app_state = json.loads(json_data)
-
-                # Extract Instagram URL
-                instagram_url = app_state.get('preFetchedData', {}).get('organization', {}).get('socialMedia', {}).get('instagramUrl', None)
-                if instagram_url:
-                    print(f"Organization: {org.get('Name', 'N/A')} - Instagram: {instagram_url}")
-                else:
-                    print(f"Organization: {org.get('Name', 'N/A')} - Instagram: Not available")
-            else:
-                print(f"Organization: {org.get('Name', 'N/A')} - Failed to find 'window.initialAppState' script tag.")
-        else:
-            print(f"Organization: {org.get('Name', 'N/A')} - Failed to fetch organization page: {org_response.status_code}")
-    else:
-        print("Organization with no WebsiteKey found.")
+    print('\nFetching Instagram URLs for first 100 orgs (may take a while):')
+    mapped = get_instagram_for_orgs(orgs)
+    for m in mapped:
+        print(m['name'], '->', m['instagram'])
